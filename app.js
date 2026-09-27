@@ -8,6 +8,13 @@
 
 const map = L.map("map");
 const savedLocationLayerGroup = L.layerGroup().addTo(map);
+const savedLocationIcon = L.divIcon({
+    className: "saved-location-marker",
+    html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5A2.5 2.5 0 0 1 8.5 1h7A2.5 2.5 0 0 1 18 3.5V22l-6-3.5L6 22V3.5Z"/></svg>',
+    iconSize: [30, 36],
+    iconAnchor: [15, 34],
+    popupAnchor: [0, -32]
+});
 
 const navToggle = document.getElementById("nav-toggle");
 const siteNav = document.getElementById("site-nav");
@@ -19,6 +26,21 @@ function toggleSiteNavigation() {
     navToggle.setAttribute("aria-label", isExpanded ? "Open navigation" : "Close navigation");
     mobileMenuToggle.setAttribute("aria-expanded", String(!isExpanded));
     siteNav.classList.toggle("is-open", !isExpanded);
+}
+
+function getSafeLocationLabel(label) {
+    const value = String(label || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+    return value.slice(0, 80) || "Saved location";
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    }[character]));
 }
 
 function addDevelopmentSimulationLog(message, status = "") {
@@ -195,6 +217,8 @@ function setupDevelopmentSimulation() {
 
     developmentSimulationLauncher.hidden = !DEVELOPMENT_SIMULATION;
     developmentSimulationPanel.hidden = true;
+    developmentSimulationPanel.setAttribute("aria-hidden", "true");
+    developmentSimulationLauncher.setAttribute("aria-expanded", "false");
     if (!DEVELOPMENT_SIMULATION) {
         return;
     }
@@ -203,6 +227,7 @@ function setupDevelopmentSimulation() {
         const isHidden = developmentSimulationPanel.hidden;
         developmentSimulationPanel.hidden = !isHidden;
         developmentSimulationLauncher.setAttribute("aria-expanded", String(isHidden));
+        developmentSimulationPanel.setAttribute("aria-hidden", String(!isHidden));
     });
     simulateRealFloodAlertButton?.addEventListener("click", simulateRealFloodAlert);
 }
@@ -321,6 +346,49 @@ let floodAlertsEnabled = localStorage.getItem(FLOOD_ALERTS_ENABLED_STORAGE_KEY) 
 let notificationRegistration;
 let fcmToken = localStorage.getItem(FCM_TOKEN_STORAGE_KEY) || "";
 
+function acknowledgeNotificationMessage(port) {
+    try {
+        port?.postMessage({ received: true });
+    } catch (error) {
+        console.warn("[FCM] Notification acknowledgement failed:", error);
+    }
+}
+
+function redirectFromNotificationMessage(message, port) {
+    if (!message || message.type !== "notification-click" || !message.url) {
+        return;
+    }
+
+    try {
+        const targetUrl = new URL(message.url, window.location.href);
+        if (targetUrl.origin !== window.location.origin) {
+            return;
+        }
+
+        acknowledgeNotificationMessage(port);
+
+        const currentUrl = new URL(window.location.href);
+        if (targetUrl.pathname === currentUrl.pathname && targetUrl.search === currentUrl.search) {
+            if (targetUrl.hash && targetUrl.hash !== currentUrl.hash) {
+                window.location.hash = targetUrl.hash;
+            }
+            return;
+        }
+
+        if (targetUrl.href !== currentUrl.href) {
+            window.location.assign(targetUrl.href);
+        }
+    } catch (error) {
+        console.warn("[FCM] Invalid notification redirect URL:", error);
+    }
+}
+
+if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", event => {
+        redirectFromNotificationMessage(event.data, event.ports?.[0]);
+    });
+}
+
 function getStoredAlertKeys() {
     try {
         const storedKeys = JSON.parse(localStorage.getItem(FLOOD_ALERT_DEDUPE_STORAGE_KEY) || "[]");
@@ -373,9 +441,10 @@ function renderSavedLocationPins() {
         }
 
         const point = L.latLng(latitude, longitude);
-        const marker = L.marker(point, { title: location.label || "Saved location" });
+        const label = getSafeLocationLabel(location.label);
+        const marker = L.marker(point, { title: label, icon: savedLocationIcon });
         marker.bindPopup(`
-            <div class="popup-title">${location.label || "Saved location"}</div>
+            <div class="popup-title">${escapeHtml(label)}</div>
             <div class="popup-risk"><strong>Source:</strong> ${location.source === "gps" ? "GPS" : "Manual pin"}</div>
             <div class="popup-risk"><strong>Radius:</strong> ${radius} m</div>
         `);
@@ -554,14 +623,17 @@ function toggleNotificationSettings() {
     const isHidden = notificationSettingsPanel.hidden;
     notificationSettingsPanel.hidden = !isHidden;
     notificationSettingsToggle.setAttribute("aria-expanded", String(isHidden));
+    notificationSettingsPanel.setAttribute("aria-hidden", String(!isHidden));
 }
 
 if (notificationSettingsToggle) {
     notificationSettingsToggle.addEventListener("click", toggleNotificationSettings);
 }
 
-if (window.location.hash === "#notification-settings") {
-    toggleNotificationSettings();
+if (notificationSettingsPanel) {
+    notificationSettingsPanel.hidden = true;
+    notificationSettingsPanel.setAttribute("aria-hidden", "true");
+    notificationSettingsToggle?.setAttribute("aria-expanded", "false");
 }
 
 function updateFloodAlertButton() {
@@ -677,11 +749,19 @@ async function showFloodNotification(title, options) {
         const registration = notificationRegistration
             ? await notificationRegistration
             : null;
+        const targetUrl = registration?.scope || new URL(".", window.location.href).href;
+        const notificationOptions = {
+            ...options,
+            data: {
+                ...(options?.data || {}),
+                url: options?.data?.url || targetUrl
+            }
+        };
 
         if (registration) {
-            await registration.showNotification(title, options);
+            await registration.showNotification(title, notificationOptions);
         } else {
-            new Notification(title, options);
+            new Notification(title, notificationOptions);
         }
         return true;
     } catch (error) {
@@ -713,6 +793,7 @@ function toggleTestWidget() {
     testModePanel.hidden = !isHidden;
     testModeLauncher.setAttribute("aria-expanded", String(!isHidden));
     testModeLauncher.setAttribute("aria-label", isHidden ? "Hide test mode panel" : "Open test mode panel");
+    testModePanel.setAttribute("aria-hidden", String(isHidden));
     testWidgetContent.setAttribute("aria-hidden", String(isHidden));
 }
 
@@ -883,7 +964,7 @@ async function runTestScenario(scenario, label = "Test alert") {
     }
 
     const evaluation = evaluateFloodAlert({ ...scenario, mode: "test" });
-    const locationLabel = scenario.location?.label || "active location";
+    const locationLabel = getSafeLocationLabel(scenario.location?.label || "active location");
     addTestLog(`${label} started`);
     addTestLog(`Location: ${locationLabel}`);
     addTestLog(`Flood risk: Category ${evaluation.category}`);
@@ -975,8 +1056,12 @@ function setupTestMode() {
     }
 
     testModePanel.hidden = !TEST_MODE;
+    testModePanel.setAttribute("aria-hidden", String(!TEST_MODE));
     testModeLauncher?.setAttribute("aria-expanded", "false");
+    testModeLauncher?.setAttribute("aria-label", "Open test mode panel");
     testWidgetContent?.setAttribute("aria-hidden", "true");
+    advancedTestPanel?.setAttribute("aria-hidden", "true");
+    advancedTestPanel?.setAttribute("hidden", "");
     if (!TEST_MODE) {
         return;
     }
@@ -1216,7 +1301,7 @@ function checkAndSendFloodAlert(weatherData = latestWeatherData, { sendNotificat
         }
 
         const title = evaluation.category === 4 ? "⚠️ High Flood Risk Alert" : "🚨 Very High Flood Risk Alert";
-        const locationLabel = location.label || "Saved location";
+        const locationLabel = getSafeLocationLabel(location.label);
         const body = `${evaluation.weatherLabel} detected near ${locationLabel}. Your ${radius} m radius overlaps a ${evaluation.categoryName} Flood Risk (Category ${evaluation.category}) area. Please monitor local conditions and plan travel carefully.`;
 
         rememberEvaluatedAlert(evaluation);
@@ -1421,8 +1506,10 @@ function selectLocation(latlng) {
 
     if (locationMarker) {
         locationMarker.setLatLng(pendingLocation);
+        locationMarker.setOpacity(1);
     } else {
         locationMarker = L.marker(pendingLocation).addTo(map);
+        locationMarker.on("click", () => locationMarker.setOpacity(0));
     }
 
     const manualModeInput = document.querySelector("input[name='location-mode'][value='manual']");
