@@ -69,6 +69,21 @@ function setSavedLocationsList(list) {
     localStorage.setItem(SAVED_LOCATIONS_STORAGE_KEY, JSON.stringify(list));
 }
 
+function getSafeLocationLabel(label) {
+    const value = String(label || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+    return value.slice(0, 80) || "Saved location";
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    }[character]));
+}
+
 function getRiskLevel(feature) {
     if (!feature || !feature.properties) {
         return 0;
@@ -266,22 +281,41 @@ function removeLocation(id) {
     renderSavedLocations();
 }
 
+function renameLocation(id) {
+    const locations = getSavedLocationsList();
+    const location = locations.find(item => item.id === id);
+    if (!location) {
+        return;
+    }
+
+    const nextLabel = window.prompt("Rename saved location", getSafeLocationLabel(location.label));
+    if (nextLabel === null) {
+        return;
+    }
+
+    location.label = getSafeLocationLabel(nextLabel);
+    setSavedLocationsList(locations);
+    renderSavedLocations();
+}
+
 function buildLocationCard(location) {
     const { highestRisk, affectedFeatures } = getHighestRiskForLocation(location);
     const sourceLabel = location.source === "gps" ? "GPS location" : "Manual pin";
+    const label = getSafeLocationLabel(location.label);
 
     const card = document.createElement("article");
     card.className = "saved-location-card";
     card.innerHTML = `
         <div class="saved-location-header">
             <div>
-                <h2>${location.label || "Saved location"}</h2>
+                <h2>${escapeHtml(label)}</h2>
                 <p class="saved-location-meta">${location.lat.toFixed(5)}, ${location.lng.toFixed(5)} · ${sourceLabel} · ${location.radius} m radius</p>
                 <p class="saved-location-meta">Saved ${formatSavedDate(location.savedAt)}</p>
             </div>
             <div class="saved-location-actions">
                 <a class="show-location-button" href="index.html?location=${encodeURIComponent(location.id)}#map">Show on map</a>
-                <button class="remove-location-button" type="button" data-id="${location.id}" aria-label="Remove ${location.label || "saved location"}">Remove</button>
+                <button class="rename-location-button" type="button" data-id="${escapeHtml(location.id)}">Rename</button>
+                <button class="remove-location-button" type="button" data-id="${escapeHtml(location.id)}" aria-label="Remove ${escapeHtml(label)}">Remove</button>
             </div>
         </div>
         ${buildRiskBadge(highestRisk, affectedFeatures)}
@@ -290,6 +324,7 @@ function buildLocationCard(location) {
         </div>
     `;
 
+    card.querySelector(".rename-location-button").addEventListener("click", () => renameLocation(location.id));
     card.querySelector(".remove-location-button").addEventListener("click", () => removeLocation(location.id));
 
     return card;

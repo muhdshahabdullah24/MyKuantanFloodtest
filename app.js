@@ -8,6 +8,13 @@
 
 const map = L.map("map");
 const savedLocationLayerGroup = L.layerGroup().addTo(map);
+const savedLocationIcon = L.divIcon({
+    className: "saved-location-marker",
+    html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5A2.5 2.5 0 0 1 8.5 1h7A2.5 2.5 0 0 1 18 3.5V22l-6-3.5L6 22V3.5Z"/></svg>',
+    iconSize: [30, 36],
+    iconAnchor: [15, 34],
+    popupAnchor: [0, -32]
+});
 
 const navToggle = document.getElementById("nav-toggle");
 const siteNav = document.getElementById("site-nav");
@@ -19,6 +26,210 @@ function toggleSiteNavigation() {
     navToggle.setAttribute("aria-label", isExpanded ? "Open navigation" : "Close navigation");
     mobileMenuToggle.setAttribute("aria-expanded", String(!isExpanded));
     siteNav.classList.toggle("is-open", !isExpanded);
+}
+
+function getSafeLocationLabel(label) {
+    const value = String(label || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+    return value.slice(0, 80) || "Saved location";
+}
+
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    }[character]));
+}
+
+function addDevelopmentSimulationLog(message, status = "") {
+    if (!developmentSimulationLog) {
+        return;
+    }
+
+    const timestamp = new Intl.DateTimeFormat("en-MY", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "Asia/Kuala_Lumpur"
+    }).format(new Date());
+    const item = document.createElement("li");
+    item.className = status ? `test-log-${status}` : "";
+    item.textContent = `[${timestamp}] ${message}`;
+    developmentSimulationLog.prepend(item);
+}
+
+function getRandomHighRiskPolygonPoint() {
+    const highRiskFeatures = [];
+    if (!floodLayer) {
+        return null;
+    }
+
+    floodLayer.eachLayer(layer => {
+        if (getRiskLevel(layer.feature) === 4 || getRiskLevel(layer.feature) === 5) {
+            highRiskFeatures.push(layer.feature);
+        }
+    });
+
+    if (!highRiskFeatures.length) {
+        return null;
+    }
+
+    const feature = highRiskFeatures[Math.floor(Math.random() * highRiskFeatures.length)];
+    const polygons = feature.geometry.type === "Polygon"
+        ? [feature.geometry.coordinates]
+        : feature.geometry.coordinates;
+    const polygon = polygons[Math.floor(Math.random() * polygons.length)];
+    const ring = polygon[0];
+    const coordinate = ring[Math.floor(Math.random() * ring.length)];
+
+    return {
+        point: L.latLng(Number(coordinate[1]), Number(coordinate[0])),
+        category: getRiskLevel(feature)
+    };
+}
+
+function getCurrentFcmToken() {
+    return String(window.fcmToken || localStorage.getItem(FCM_TOKEN_STORAGE_KEY) || "").trim();
+}
+
+async function simulateRealFloodAlert() {
+    if (!DEVELOPMENT_SIMULATION || !simulateRealFloodAlertButton) {
+        return;
+    }
+
+    addDevelopmentSimulationLog("Real flood alert simulation started");
+    if (!("Notification" in window)) {
+        addDevelopmentSimulationLog("❌ Notifications are unavailable in this browser", "error");
+        return;
+    }
+
+    if (Notification.permission === "default") {
+        addDevelopmentSimulationLog("Requesting notification permission");
+        const permission = await Notification.requestPermission();
+        addDevelopmentSimulationLog(`Notification permission: ${permission}`);
+    }
+
+    if (Notification.permission !== "granted") {
+        addDevelopmentSimulationLog("❌ Simulation blocked: notification permission is required", "error");
+        return;
+    }
+
+    if (!getCurrentFcmToken()) {
+        addDevelopmentSimulationLog("❌ Simulation blocked: valid FCM registration token is required", "error");
+        return;
+    }
+
+    const selectedPolygon = getRandomHighRiskPolygonPoint();
+    if (!selectedPolygon) {
+        addDevelopmentSimulationLog("❌ Simulation blocked: no Category 4/5 polygon is loaded", "error");
+        return;
+    }
+
+    const originalLocations = getSavedLocationsList();
+    const originalSavedLocation = savedLocation;
+    const originalRadius = radiusCircle ? radiusCircle.getRadius() : null;
+    const originalWeather = latestWeatherData;
+    const originalRadiusCircle = radiusCircle;
+    const originalLocationStatus = locationStatus.textContent;
+    const radius = Number(originalLocations[originalLocations.length - 1]?.radius) || originalRadius || 500;
+    const temporaryLocation = {
+        id: `development-simulation-${Date.now()}`,
+        label: "Development simulation location",
+        lat: selectedPolygon.point.lat,
+        lng: selectedPolygon.point.lng,
+        radius,
+        source: "development-simulation"
+    };
+    const simulatedWeather = {
+        current: {
+            ...(originalWeather?.current || {}),
+            weather_code: 95,
+            time: new Date().toISOString()
+        },
+        hourly: originalWeather?.hourly || {
+            time: [new Date().toISOString()],
+            weather_code: [95]
+        }
+    };
+
+    try {
+        setSavedLocationsList([temporaryLocation]);
+        savedLocation = selectedPolygon.point;
+        radiusCircle = L.circle(savedLocation, {
+            radius,
+            color: "#b91c1c",
+            fillColor: "#ef4444",
+            fillOpacity: 0.15,
+            weight: 2
+        }).addTo(map);
+        latestWeatherData = simulatedWeather;
+        addDevelopmentSimulationLog(`Selected random Category ${selectedPolygon.category} polygon`);
+        addDevelopmentSimulationLog(`Temporary location: ${selectedPolygon.point.lat.toFixed(6)}, ${selectedPolygon.point.lng.toFixed(6)} (${radius} m)`);
+        addDevelopmentSimulationLog("Weather code set to 95 - Thunderstorm");
+
+        const realEvaluationPassed = checkAndSendFloodAlert(simulatedWeather, { sendNotifications: false });
+        addDevelopmentSimulationLog(`Real alert evaluation: ${realEvaluationPassed ? "TRUE" : "FALSE"}`, realEvaluationPassed ? "met" : "not-met");
+
+        if (realEvaluationPassed) {
+            const title = selectedPolygon.category === 4
+                ? "⚠️ High Flood Risk Alert"
+                : "🚨 Very High Flood Risk Alert";
+            const notificationSent = await showFloodNotification(title, {
+                body: `Thunderstorm detected near the development simulation location. The ${radius} m radius overlaps a Category ${selectedPolygon.category} flood-risk area.`,
+                tag: `kuantan-flood-development-simulation-${Date.now()}`
+            });
+            addDevelopmentSimulationLog(
+                notificationSent ? "🔔 FCM notification sent" : "⚠️ FCM notification failed",
+                notificationSent ? "sent" : "error"
+            );
+        } else {
+            addDevelopmentSimulationLog("No FCM notification requested because the real evaluation returned false", "not-met");
+        }
+    } catch (error) {
+        console.error("[DEV] Real flood alert simulation failed:", error);
+        addDevelopmentSimulationLog(`❌ Simulation failed: ${error.message}`, "error");
+    } finally {
+        setSavedLocationsList(originalLocations);
+        savedLocation = originalSavedLocation;
+        latestWeatherData = originalWeather;
+        if (radiusCircle && radiusCircle !== originalRadiusCircle) {
+            radiusCircle.remove();
+        }
+        radiusCircle = originalRadiusCircle;
+        if (radiusCircle && originalSavedLocation && originalRadius !== null) {
+            radiusCircle.setLatLng(originalSavedLocation).setRadius(originalRadius);
+        }
+        locationStatus.textContent = originalLocationStatus;
+        renderSavedLocationPins();
+        updateSavedLocationsSummary();
+        updateTestThresholdStatus();
+        addDevelopmentSimulationLog("Original saved location and radius restored", "sent");
+    }
+}
+
+function setupDevelopmentSimulation() {
+    if (!developmentSimulationPanel || !developmentSimulationLauncher) {
+        return;
+    }
+
+    developmentSimulationLauncher.hidden = !DEVELOPMENT_SIMULATION;
+    developmentSimulationPanel.hidden = true;
+    developmentSimulationPanel.setAttribute("aria-hidden", "true");
+    developmentSimulationLauncher.setAttribute("aria-expanded", "false");
+    if (!DEVELOPMENT_SIMULATION) {
+        return;
+    }
+
+    developmentSimulationLauncher.addEventListener("click", () => {
+        const isHidden = developmentSimulationPanel.hidden;
+        developmentSimulationPanel.hidden = !isHidden;
+        developmentSimulationLauncher.setAttribute("aria-expanded", String(isHidden));
+        developmentSimulationPanel.setAttribute("aria-hidden", String(!isHidden));
+    });
+    simulateRealFloodAlertButton?.addEventListener("click", simulateRealFloodAlert);
 }
 
 navToggle.addEventListener("click", toggleSiteNavigation);
@@ -92,6 +303,7 @@ function floodStyle(feature) {
 
 const WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast";
 const TEST_MODE = true;
+const DEVELOPMENT_SIMULATION = true;
 const KUANTAN_LOCATION = {
     name: "Kuantan, Pahang, Malaysia",
     latitude: 3.8077,
@@ -229,9 +441,10 @@ function renderSavedLocationPins() {
         }
 
         const point = L.latLng(latitude, longitude);
-        const marker = L.marker(point, { title: location.label || "Saved location" });
+        const label = getSafeLocationLabel(location.label);
+        const marker = L.marker(point, { title: label, icon: savedLocationIcon });
         marker.bindPopup(`
-            <div class="popup-title">${location.label || "Saved location"}</div>
+            <div class="popup-title">${escapeHtml(label)}</div>
             <div class="popup-risk"><strong>Source:</strong> ${location.source === "gps" ? "GPS" : "Manual pin"}</div>
             <div class="popup-risk"><strong>Radius:</strong> ${radius} m</div>
         `);
@@ -410,14 +623,17 @@ function toggleNotificationSettings() {
     const isHidden = notificationSettingsPanel.hidden;
     notificationSettingsPanel.hidden = !isHidden;
     notificationSettingsToggle.setAttribute("aria-expanded", String(isHidden));
+    notificationSettingsPanel.setAttribute("aria-hidden", String(!isHidden));
 }
 
 if (notificationSettingsToggle) {
     notificationSettingsToggle.addEventListener("click", toggleNotificationSettings);
 }
 
-if (window.location.hash === "#notification-settings") {
-    toggleNotificationSettings();
+if (notificationSettingsPanel) {
+    notificationSettingsPanel.hidden = true;
+    notificationSettingsPanel.setAttribute("aria-hidden", "true");
+    notificationSettingsToggle?.setAttribute("aria-expanded", "false");
 }
 
 function updateFloodAlertButton() {
@@ -562,6 +778,10 @@ const toggleAdvancedTestsButton = document.getElementById("toggle-advanced-tests
 const testThresholdStatus = document.getElementById("test-threshold-status");
 const testLog = document.getElementById("test-log");
 const testIntervalInput = document.getElementById("test-interval-seconds");
+const developmentSimulationPanel = document.getElementById("development-simulation-panel");
+const developmentSimulationLauncher = document.getElementById("development-simulation-launcher");
+const developmentSimulationLog = document.getElementById("development-simulation-log");
+const simulateRealFloodAlertButton = document.getElementById("simulate-real-flood-alert");
 let testRunActive = false;
 
 function toggleTestWidget() {
@@ -573,6 +793,7 @@ function toggleTestWidget() {
     testModePanel.hidden = !isHidden;
     testModeLauncher.setAttribute("aria-expanded", String(!isHidden));
     testModeLauncher.setAttribute("aria-label", isHidden ? "Hide test mode panel" : "Open test mode panel");
+    testModePanel.setAttribute("aria-hidden", String(isHidden));
     testWidgetContent.setAttribute("aria-hidden", String(isHidden));
 }
 
@@ -743,7 +964,7 @@ async function runTestScenario(scenario, label = "Test alert") {
     }
 
     const evaluation = evaluateFloodAlert({ ...scenario, mode: "test" });
-    const locationLabel = scenario.location?.label || "active location";
+    const locationLabel = getSafeLocationLabel(scenario.location?.label || "active location");
     addTestLog(`${label} started`);
     addTestLog(`Location: ${locationLabel}`);
     addTestLog(`Flood risk: Category ${evaluation.category}`);
@@ -835,6 +1056,12 @@ function setupTestMode() {
     }
 
     testModePanel.hidden = !TEST_MODE;
+    testModePanel.setAttribute("aria-hidden", String(!TEST_MODE));
+    testModeLauncher?.setAttribute("aria-expanded", "false");
+    testModeLauncher?.setAttribute("aria-label", "Open test mode panel");
+    testWidgetContent?.setAttribute("aria-hidden", "true");
+    advancedTestPanel?.setAttribute("aria-hidden", "true");
+    advancedTestPanel?.setAttribute("hidden", "");
     if (!TEST_MODE) {
         return;
     }
@@ -874,6 +1101,7 @@ function setupTestMode() {
 }
 
 setupTestMode();
+setupDevelopmentSimulation();
 
 weatherElements.toggle.addEventListener("click", () => {
     const isExpanded = weatherElements.toggle.getAttribute("aria-expanded") === "true";
@@ -1020,7 +1248,7 @@ function getHighestAnalysisRisk() {
     return highestRisk;
 }
 
-function checkAndSendFloodAlert(weatherData = latestWeatherData) {
+function checkAndSendFloodAlert(weatherData = latestWeatherData, { sendNotifications = true } = {}) {
     const savedLocations = getSavedLocationsList();
     if (!weatherData || !floodLayer || !savedLocations.length) {
         console.info("[ALERT] Missing location, flood layer, or weather data.");
@@ -1073,14 +1301,14 @@ function checkAndSendFloodAlert(weatherData = latestWeatherData) {
         }
 
         const title = evaluation.category === 4 ? "⚠️ High Flood Risk Alert" : "🚨 Very High Flood Risk Alert";
-        const locationLabel = location.label || "Saved location";
+        const locationLabel = getSafeLocationLabel(location.label);
         const body = `${evaluation.weatherLabel} detected near ${locationLabel}. Your ${radius} m radius overlaps a ${evaluation.categoryName} Flood Risk (Category ${evaluation.category}) area. Please monitor local conditions and plan travel carefully.`;
 
         rememberEvaluatedAlert(evaluation);
         alertState.lastNotificationKey = evaluation.alertKey;
         alertSent = true;
 
-        if (floodAlertsEnabled && "Notification" in window && Notification.permission === "granted") {
+        if (sendNotifications && floodAlertsEnabled && "Notification" in window && Notification.permission === "granted") {
             showFloodNotification(title, {
                 body,
                 tag: `kuantan-flood-risk-${evaluation.category}-${evaluation.code}-${location.id}`
@@ -1278,8 +1506,10 @@ function selectLocation(latlng) {
 
     if (locationMarker) {
         locationMarker.setLatLng(pendingLocation);
+        locationMarker.setOpacity(1);
     } else {
         locationMarker = L.marker(pendingLocation).addTo(map);
+        locationMarker.on("click", () => locationMarker.setOpacity(0));
     }
 
     const manualModeInput = document.querySelector("input[name='location-mode'][value='manual']");
