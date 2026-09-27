@@ -235,6 +235,19 @@
             </div>
         </aside>
 
+        <button id="development-simulation-launcher" class="development-simulation-launcher" type="button"
+            aria-expanded="false" aria-controls="development-simulation-panel" hidden>
+            <span aria-hidden="true">🛠️</span> Development Simulation
+        </button>
+
+        <aside id="development-simulation-panel" class="development-simulation-panel" hidden
+            aria-labelledby="development-simulation-title">
+            <p class="test-mode-label">DEVELOPMENT ONLY — Uses the real alert evaluation and FCM pipeline.</p>
+            <h3 id="development-simulation-title">⚠️ Real Flood Alert Simulation</h3>
+            <button id="simulate-real-flood-alert" type="button">⚠️ Simulate Real Flood Alert</button>
+            <ol id="development-simulation-log" class="test-log" aria-live="polite"></ol>
+        </aside>
+
         <aside class="flood-risk-info" aria-labelledby="flood-risk-info-title">
             <button id="flood-risk-toggle" class="flood-risk-toggle" type="button" aria-expanded="false"
                 aria-controls="flood-risk-content">
