@@ -79,6 +79,27 @@ body {
     line-height: 1;
 }
 
+.nav-icon {
+    color: transparent;
+    -webkit-text-stroke: 1px currentColor;
+    text-shadow: none;
+}
+
+.saved-location-marker {
+    background: transparent;
+    border: 0;
+}
+
+.saved-location-marker svg {
+    display: block;
+    width: 30px;
+    height: 36px;
+    fill: #0f766e;
+    stroke: #ffffff;
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+}
+
 .nav-toggle {
     display: grid;
     gap: 4px;
@@ -1747,6 +1768,15 @@ main {
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 6px;
+}
+
+.rename-location-button {
+    border: 1px solid #2563eb;
+    color: #1d4ed8;
+    background: #eff6ff;
+    border-radius: 5px;
+    padding: 7px 10px;
+    cursor: pointer;
 }
 
 .saved-location-header h2 {
