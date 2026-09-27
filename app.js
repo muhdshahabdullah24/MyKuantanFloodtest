@@ -134,6 +134,49 @@ let floodAlertsEnabled = localStorage.getItem(FLOOD_ALERTS_ENABLED_STORAGE_KEY) 
 let notificationRegistration;
 let fcmToken = localStorage.getItem(FCM_TOKEN_STORAGE_KEY) || "";
 
+function acknowledgeNotificationMessage(port) {
+    try {
+        port?.postMessage({ received: true });
+    } catch (error) {
+        console.warn("[FCM] Notification acknowledgement failed:", error);
+    }
+}
+
+function redirectFromNotificationMessage(message, port) {
+    if (!message || message.type !== "notification-click" || !message.url) {
+        return;
+    }
+
+    try {
+        const targetUrl = new URL(message.url, window.location.href);
+        if (targetUrl.origin !== window.location.origin) {
+            return;
+        }
+
+        acknowledgeNotificationMessage(port);
+
+        const currentUrl = new URL(window.location.href);
+        if (targetUrl.pathname === currentUrl.pathname && targetUrl.search === currentUrl.search) {
+            if (targetUrl.hash && targetUrl.hash !== currentUrl.hash) {
+                window.location.hash = targetUrl.hash;
+            }
+            return;
+        }
+
+        if (targetUrl.href !== currentUrl.href) {
+            window.location.assign(targetUrl.href);
+        }
+    } catch (error) {
+        console.warn("[FCM] Invalid notification redirect URL:", error);
+    }
+}
+
+if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", event => {
+        redirectFromNotificationMessage(event.data, event.ports?.[0]);
+    });
+}
+
 function getStoredAlertKeys() {
     try {
         const storedKeys = JSON.parse(localStorage.getItem(FLOOD_ALERT_DEDUPE_STORAGE_KEY) || "[]");
@@ -490,11 +533,19 @@ async function showFloodNotification(title, options) {
         const registration = notificationRegistration
             ? await notificationRegistration
             : null;
+        const targetUrl = registration?.scope || new URL(".", window.location.href).href;
+        const notificationOptions = {
+            ...options,
+            data: {
+                ...(options?.data || {}),
+                url: options?.data?.url || targetUrl
+            }
+        };
 
         if (registration) {
-            await registration.showNotification(title, options);
+            await registration.showNotification(title, notificationOptions);
         } else {
-            new Notification(title, options);
+            new Notification(title, notificationOptions);
         }
         return true;
     } catch (error) {
@@ -1814,4 +1865,3 @@ legend.onAdd = function () {
 };
 
 legend.addTo(map);
-
