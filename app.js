@@ -793,6 +793,7 @@ function toggleTestWidget() {
     testModePanel.hidden = !isHidden;
     testModeLauncher.setAttribute("aria-expanded", String(!isHidden));
     testModeLauncher.setAttribute("aria-label", isHidden ? "Hide test mode panel" : "Open test mode panel");
+    testModePanel.setAttribute("aria-hidden", String(isHidden));
     testWidgetContent.setAttribute("aria-hidden", String(isHidden));
 }
 
@@ -1055,6 +1056,7 @@ function setupTestMode() {
     }
 
     testModePanel.hidden = !TEST_MODE;
+    testModePanel.setAttribute("aria-hidden", String(!TEST_MODE));
     testModeLauncher?.setAttribute("aria-expanded", "false");
     testModeLauncher?.setAttribute("aria-label", "Open test mode panel");
     testWidgetContent?.setAttribute("aria-hidden", "true");
@@ -1507,6 +1509,7 @@ function selectLocation(latlng) {
         locationMarker.setOpacity(1);
     } else {
         locationMarker = L.marker(pendingLocation).addTo(map);
+        locationMarker.on("click", () => locationMarker.setOpacity(0));
     }
 
     const manualModeInput = document.querySelector("input[name='location-mode'][value='manual']");
